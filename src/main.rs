@@ -41,3 +41,28 @@ async fn handler(State(pool): State<SqlitePool>) -> String {
 
     format!("Hello, world! — you are visitor #{}", row.value)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!().run(&pool).await.unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn counter_increments() {
+        let pool = test_pool().await;
+
+        let body1 = handler(State(pool.clone())).await;
+        assert_eq!(body1, "Hello, world! — you are visitor #1");
+
+        let body2 = handler(State(pool.clone())).await;
+        assert_eq!(body2, "Hello, world! — you are visitor #2");
+
+        let body3 = handler(State(pool)).await;
+        assert_eq!(body3, "Hello, world! — you are visitor #3");
+    }
+}
