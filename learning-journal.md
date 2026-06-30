@@ -408,3 +408,79 @@ Async isn't free:
 - Colored functions: async fns can only be called from other async fns (or a runtime)
 
 But for web servers, the thread-per-connection model tops out fast. Async scales to orders of magnitude more concurrent connections on the same hardware.
+
+### Multi-DB Support (SQLite + Postgres + MySQL)
+
+For self-hosted apps, supporting multiple databases is a key feature — let users start with SQLite and grow into Postgres. SQLx makes this possible with feature flags + `AnyPool`.
+
+**Cargo.toml — feature flags control what drivers compile in:**
+```toml
+[features]
+default = ["sqlite"]
+sqlite   = ["sqlx/sqlite"]
+postgres = ["sqlx/postgres"]
+mysql    = ["sqlx/mysql"]
+
+[dependencies]
+sqlx = { version = "0.8", features = ["runtime-tokio", "migrate"] }
+```
+
+User compiles with: `cargo build --features postgres,sqlite`
+
+**Connection — `AnyPool` auto-detects DB from the URL:**
+```rust
+use sqlx::any::{AnyPool, AnyConnectOptions};
+use std::str::FromStr;
+
+async fn connect(url: &str) -> AnyPool {
+    let opts = AnyConnectOptions::from_str(url).unwrap();
+    AnyPool::connect_with(opts).await.unwrap()
+}
+```
+
+URL determines backend at runtime:
+```
+sqlite:///app/db.sqlite              → SQLite
+postgres://user:pass@localhost/app   → Postgres
+mysql://user:pass@localhost/app      → MySQL/MariaDB
+```
+
+**Migrations — separate directory per DB:**
+```
+migrations/sqlite/20240101_init.up.sql
+migrations/postgres/20240101_init.up.sql
+migrations/mysql/20240101_init.up.sql
+```
+
+Run the right dir based on detected DB kind. `sqlx::migrate!()` only works with one dir at compile time, so at runtime use `Migrator::new()` pointing at the right path.
+
+**Queries — drop `query!()` macros, use runtime API:**
+```rust
+// query!() needs a concrete DB at compile time — can't use with AnyPool
+// Instead use runtime queries:
+sqlx::query("SELECT * FROM users WHERE id = ?")
+    .bind(id)
+    .fetch_optional(&pool)
+    .await?;
+
+// For typed results, derive FromRow:
+#[derive(sqlx::FromRow)]
+struct User { id: i64, name: String }
+
+sqlx::query_as::<_, User>("SELECT id, name FROM users WHERE id = ?")
+    .bind(id)
+    .fetch_optional(&pool)
+    .await?;
+```
+
+**Full strategy:**
+
+| Layer | Approach |
+|-------|----------|
+| Feature flags | User picks which drivers to bundle at compile time |
+| Connection pool | `AnyPool` — one type, runtime DB detection from URL |
+| Migrations | Per-DB directories, run matching dir at startup |
+| Queries | `sqlx::query()` / `sqlx::query_as()` — portable SQL, runtime checked |
+| CI | Spin up SQLite + Postgres + MySQL, run test suite against all three |
+
+**The trade:** you lose `query!()` compile-time checking (it needs a concrete DB), but gain one codebase that runs on whatever DB the user has. For self-hosted, that's the right trade.
