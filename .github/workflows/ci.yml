@@ -11,7 +11,7 @@ env:
   DATABASE_URL: sqlite:///home/runner/work/rust-lol/rust-lol/db.sqlite
 
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,31 +40,5 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.cargo/bin/sqlx
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-
-      - name: Install sqlx-cli
-        run: cargo install sqlx-cli --no-default-features -F rustls,sqlite
-
-      - name: Setup database
-        run: |
-          touch db.sqlite
-          sqlx migrate run
-
-      - name: Run tests
+      - name: Test
         run: cargo test --verbose
