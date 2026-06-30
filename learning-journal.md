@@ -42,3 +42,53 @@ Common Tower layers:
 | `tower-http` | `AuthLayer` | Auth guard (via `ValidateRequest`) |
 | `tower` | `BufferLayer` | Backpressure handling |
 | `tower-http` | `SensitiveHeadersLayer` | Masks cookies/auth headers in logs |
+
+### Rust Persistence / ORM Landscape
+
+Three main players for database access in Rust:
+
+| Crate | Stars | Style | Async | Best With |
+|-------|-------|-------|-------|-----------|
+| **SQLx** | ~17k | Write SQL, compile-time checked | ✅ | Axum — same minimal philosophy |
+| Diesel | ~14k | Schema DSL, query builder | ❌ (needs `spawn_blocking`) | Sync apps, most mature |
+| SeaORM | ~10k | Entities, relations, ActiveRecord | ✅ | When you want a "real ORM" |
+
+Go's `jmoiron/sqlx` is a different project — same name, completely different scope (thin `database/sql` wrapper vs. full async driver + migrations + compile-time query checking).
+
+### SQLx + SQLite with Axum
+
+**Setup:**
+```toml
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
+```
+
+**Migrations** live in `migrations/` and run via `sqlx::migrate!().run(&pool).await`:
+```sql
+CREATE TABLE IF NOT EXISTS counters (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    value INTEGER NOT NULL DEFAULT 0
+);
+```
+
+**Sharing state** — Axum uses `.with_state(pool)` to inject the connection pool into handlers:
+```rust
+let app = Router::new()
+    .route("/", get(handler))
+    .with_state(pool);
+```
+
+**Extracting state** in handlers:
+```rust
+async fn handler(State(pool): State<SqlitePool>) -> String { ... }
+```
+
+**⚠️ SQLite connection URL gotcha:** SQLite needs the file to exist before SQLx can open it, even for a new database. The fix: call `std::fs::File::create(&db_path)` before connecting. Also, the URL format matters: `sqlite:///absolute/path` (three slashes) for absolute paths, `sqlite:relative/path` for relative.
+
+**Atomic counter pattern** — UPDATE then SELECT, no transaction needed for a simple hit counter:
+```rust
+sqlx::query("UPDATE counters SET value = value + 1 WHERE name = 'visits'")
+    .execute(&pool).await?;
+let (count,) = sqlx::query_as("SELECT value FROM counters WHERE name = 'visits'")
+    .fetch_one(&pool).await?;
+```
