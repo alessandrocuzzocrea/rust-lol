@@ -108,3 +108,57 @@ sqlx::query("UPDATE counters SET value = value + 1 WHERE name = 'visits'")
 let (count,) = sqlx::query_as("SELECT value FROM counters WHERE name = 'visits'")
     .fetch_one(&pool).await?;
 ```
+
+### SQLx Compile-Time Query Checking
+
+Two API tiers — unchecked (runtime) vs checked (compile-time):
+
+| Function | Verifies at build? | When it fails |
+|----------|-------------------|---------------|
+| `sqlx::query()` / `sqlx::query_as()` | ❌ No | Runtime — `Result::Err` |
+| `sqlx::query!()` / `sqlx::query_as!()` | ✅ Yes | Won't compile |
+
+**How it works:**
+1. Set `DATABASE_URL` env var (or `.env` file) pointing to a real database
+2. At build time, the `!` macros connect to that database
+3. They run `EXPLAIN` / introspect the schema
+4. Wrong column name? → **compile error**, not a runtime panic
+5. Wrong type? → **compile error**
+
+Example — this won't compile:
+```rust
+// Compile error: no such column: nonexistent
+let row = sqlx::query!("SELECT nonexistent FROM counters WHERE name = 'visits'")
+    .fetch_one(&pool).await?;
+```
+
+`.env` file:
+```
+DATABASE_URL=sqlite:///home/loller/dev/rust-lol/db.sqlite
+```
+
+**Tradeoffs:**
+- Pro: catches SQL bugs at build time, no runtime surprises
+- Con: needs a running DB with up-to-date schema at build time
+- Workaround: `SQLX_OFFLINE=true` uses a pre-generated schema cache file (`.sqlx/`) — no DB needed in CI
+
+**`query!()` returns auto-derived structs** — field names come from column names:
+```rust
+let row = sqlx::query!("SELECT value FROM counters WHERE name = 'visits'")
+    .fetch_one(&pool).await?;
+// row.value is i64 (type inferred from the actual column)
+```
+
+**`query_as!()` needs a struct type** — more explicit, same checking:
+```rust
+#[derive(sqlx::FromRow)]
+struct Counter { value: i64 }
+
+let row = sqlx::query_as!(Counter, "SELECT value FROM counters WHERE name = 'visits'")
+    .fetch_one(&pool).await?;
+```
+
+**What macros can't check:**
+- Dynamic SQL (string-built queries, `IN (...)` lists) — fall back to `sqlx::query()`
+- Custom extensions SQLx doesn't understand — usually passes through if syntax is parsable
+- Queries where the schema changes at runtime — macros only see the DB at build time

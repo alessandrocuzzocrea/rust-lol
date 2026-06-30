@@ -27,18 +27,17 @@ async fn main() {
 }
 
 async fn handler(State(pool): State<SqlitePool>) -> String {
-    // Atomically increment the visit counter
-    sqlx::query("UPDATE counters SET value = value + 1 WHERE name = 'visits'")
+    // Atomically increment — checked at compile time against the real DB
+    sqlx::query!("UPDATE counters SET value = value + 1 WHERE name = 'visits'")
         .execute(&pool)
         .await
         .unwrap();
 
-    // Read the current count
-    let (count,): (i64,) =
-        sqlx::query_as("SELECT value FROM counters WHERE name = 'visits'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    // Read the current count — column & type checked at compile time
+    let row = sqlx::query!("SELECT value FROM counters WHERE name = 'visits'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
-    format!("Hello, world! — you are visitor #{count}")
+    format!("Hello, world! — you are visitor #{}", row.value)
 }
