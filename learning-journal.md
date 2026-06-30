@@ -285,3 +285,78 @@ static USERS: LazyLock<HashMap<u32, User>> = LazyLock::new(|| {
 ```
 
 `LazyLock` is lazy, thread-safe, and runs once on first access — perfect for static reference data.
+
+### Sync vs Async in Rust
+
+**The core idea:** sync code blocks the OS thread until it's done. Async code *yields* the thread while waiting, so one thread can juggle thousands of tasks.
+
+**Concrete example — reading from a database:**
+
+```
+SYNC (Diesel style):
+  Thread #12: [ask DB for row] -------WAITING------- [get row, continue]
+  Thread #12 is frozen doing nothing for 5ms. The OS can't use it for anything else.
+
+ASYNC (SQLx style):
+  Task on Thread #12: [ask DB for row] .await
+  Thread #12: [immediately switches to handle another request]
+  ... later, DB responds ...
+  Thread #8: [picks up the result, continues the task]
+```
+
+**Why this matters for a web server:**
+
+A web server handles many concurrent connections. With sync:
+- Each connection needs its own OS thread (expensive — ~8MB stack each)
+- 10,000 connections = 10,000 threads = system melts
+
+With async:
+- One thread pool (typically N = CPU cores) juggles all connections
+- 10,000 connections on 8 threads — normal operation
+- Each `.await` point is a chance to switch to another task
+
+**How Rust implements it:**
+
+No runtime ships with the language. You pick one:
+
+| Runtime | Used by | Trait |
+|---------|---------|-------|
+| **Tokio** | Axum, SQLx, hyper | `tokio::main` |
+| async-std | Less common | `async_std::main` |
+| smol | Lightweight use cases | `smol::block_on` |
+
+Our stack is Tokio all the way down:
+```rust
+#[tokio::main]  // Tokio runtime, not std::main
+async fn main() {
+    // Axum runs on Tokio
+    // SQLx pool runs on Tokio
+    // .await yields to whichever task needs the thread
+}
+```
+
+**The Diesel problem:**
+
+Diesel is synchronous — it blocks the thread during every query:
+
+```rust
+// ❌ This blocks Tokio's thread #12 for 5ms
+//    Other requests waiting on that thread are stuck
+let users = users::table.load(&mut conn)?;
+
+// ✅ Wrap in spawn_blocking — moves to a separate blocking thread pool
+let users = tokio::task::spawn_blocking(move || {
+    users::table.load(&mut conn)
+}).await??;  // double ?? : spawn_blocking Result + Diesel Result
+```
+
+This is why Diesel + Axum is annoying. Every DB call gets wrapped. SQLx avoids this by being async-native — it uses Tokio's non-blocking I/O to talk to the database.
+
+**The trade:**
+
+Async isn't free:
+- More complex stack traces (`.await` splits across tasks)
+- `Send + Sync + 'static` bounds everywhere (the compiler enforces task-safety)
+- Colored functions: async fns can only be called from other async fns (or a runtime)
+
+But for web servers, the thread-per-connection model tops out fast. Async scales to orders of magnitude more concurrent connections on the same hardware.
