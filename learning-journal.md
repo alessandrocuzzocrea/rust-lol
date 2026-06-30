@@ -212,3 +212,76 @@ Key pieces:
 - `pool.clone()` is cheap — `SqlitePool` is just an `Arc` internally, so cloning doesn't create new connections
 - **Test handlers directly** — call the function with `State(pool)` instead of going through HTTP. Faster, simpler, no port binding. For full HTTP integration tests, use `axum_test` or `reqwest` + spawn the router
 - `#[cfg(test)]` — the module only compiles during `cargo test`, zero cost at build time
+
+### OpenAPI / Swagger with utoipa
+
+**utoipa** is the stable choice for Axum 0.8 + OpenAPI. `aide` (the Axum-native alternative) is stuck on Axum 0.7 as of mid-2026.
+
+**Dependencies:**
+```toml
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+```
+
+**Step 1 — Mark your types** with `ToSchema`:
+```rust
+#[derive(Serialize, ToSchema)]
+struct User {
+    id: u32,
+    name: String,
+    email: String,
+}
+```
+
+**Step 2 — Define the OpenAPI document** as a struct:
+```rust
+#[derive(OpenApi)]
+#[openapi(
+    paths(hello, get_user),
+    components(schemas(User))
+)]
+struct ApiDoc;
+```
+
+**Step 3 — Annotate each handler** with `#[utoipa::path(...)]`:
+```rust
+#[utoipa::path(
+    get,
+    path = "/user/{id}",
+    responses(
+        (status = 200, description = "User found", body = User),
+        (status = 404, description = "User not found")
+    ),
+    params(
+        ("id" = u32, Path, description = "User ID")
+    )
+)]
+async fn get_user(Path(id): Path<u32>) -> impl IntoResponse { ... }
+```
+
+**Step 4 — Merge Swagger UI into the router:**
+```rust
+let app = Router::new()
+    .route("/", get(hello))
+    .route("/user/{id}", get(get_user))
+    .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()));
+```
+
+This gives you:
+- `GET /docs` — interactive Swagger UI
+- `GET /api-docs/openapi.json` — raw OpenAPI 3.1 JSON spec
+
+**Types default to `IntoResponse`** — utoipa infers response schemas from the `body = User` annotation and the handler's return type. For complex cases, describe each status explicitly.
+
+**Hardcoded data with `LazyLock`** — for prototypes, no DB needed:
+```rust
+static USERS: LazyLock<HashMap<u32, User>> = LazyLock::new(|| {
+    HashMap::from([
+        (1, User { id: 1, name: "Alice".into(), email: "alice@example.com".into() }),
+    ])
+});
+```
+
+`LazyLock` is lazy, thread-safe, and runs once on first access — perfect for static reference data.
