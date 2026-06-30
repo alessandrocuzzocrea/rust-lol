@@ -62,14 +62,30 @@ Go's `jmoiron/sqlx` is a different project — same name, completely different s
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
 ```
 
-**Migrations** live in `migrations/` and run via `sqlx::migrate!().run(&pool).await`:
+**Migrations** live in `migrations/` and run via `sqlx::migrate!().run(&pool).await`. File naming determines the type:
+
+| Pattern | Type | Behavior |
+|---------|------|----------|
+| `*.sql` | Simple | One-way, forward only |
+| `*.up.sql` | Reversible up | Forward migration (has matching `*.down.sql`) |
+| `*.down.sql` | Reversible down | Revert migration (has matching `*.up.sql`) |
+
+Example migration up:
 ```sql
 CREATE TABLE IF NOT EXISTS counters (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     value INTEGER NOT NULL DEFAULT 0
 );
+INSERT OR IGNORE INTO counters (id, name, value) VALUES (1, 'visits', 0);
 ```
+
+Example migration down:
+```sql
+DROP TABLE IF EXISTS counters;
+```
+
+**`sqlx::migrate!()` only runs forward** (up) migrations. To revert, install `sqlx-cli` and run `sqlx migrate revert` — it picks the right file by the `*.down.sql` suffix. No magic comment separators inside a single file.
 
 **Sharing state** — Axum uses `.with_state(pool)` to inject the connection pool into handlers:
 ```rust
