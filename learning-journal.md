@@ -173,3 +173,42 @@ let row = sqlx::query_as!(Counter, "SELECT value FROM counters WHERE name = 'vis
 - Dynamic SQL (string-built queries, `IN (...)` lists) — fall back to `sqlx::query()`
 - Custom extensions SQLx doesn't understand — usually passes through if syntax is parsable
 - Queries where the schema changes at runtime — macros only see the DB at build time
+
+### Testing with SQLx + Axum
+
+**In-memory SQLite** is the killer feature for tests — no file, no cleanup, instant:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!().run(&pool).await.unwrap(); // migrations work on :memory: too
+        pool
+    }
+
+    #[tokio::test]
+    async fn counter_increments() {
+        let pool = test_pool().await;
+
+        let body1 = handler(State(pool.clone())).await;
+        assert_eq!(body1, "Hello, world! — you are visitor #1");
+
+        let body2 = handler(State(pool.clone())).await;
+        assert_eq!(body2, "Hello, world! — you are visitor #2");
+
+        let body3 = handler(State(pool)).await;
+        assert_eq!(body3, "Hello, world! — you are visitor #3");
+    }
+}
+```
+
+Key pieces:
+- `sqlite::memory:` — each connection gets a fresh, isolated database; nothing persists to disk
+- `sqlx::migrate!()` still works on `:memory:` — schema is set up exactly like production
+- `#[tokio::test]` — needed because handlers are async
+- `pool.clone()` is cheap — `SqlitePool` is just an `Arc` internally, so cloning doesn't create new connections
+- **Test handlers directly** — call the function with `State(pool)` instead of going through HTTP. Faster, simpler, no port binding. For full HTTP integration tests, use `axum_test` or `reqwest` + spawn the router
+- `#[cfg(test)]` — the module only compiles during `cargo test`, zero cost at build time
