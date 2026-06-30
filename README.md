@@ -26,3 +26,15 @@ sqlx migrate run --database-url sqlite://$(pwd)/db.sqlite
 # Revert the last migration
 sqlx migrate revert --database-url sqlite://$(pwd)/db.sqlite
 ```
+
+## OpenAPI
+
+Generated via [utoipa](https://github.com/juhaku/utoipa). The spec is served live at `/api-docs/openapi.json` and browsable at `/docs`.
+
+```bash
+# Generate openapi.json for version control
+cargo run --bin gen-openapi
+
+# View the Swagger UI (server must be running)
+# http://127.0.0.1:3000/docs
+```
