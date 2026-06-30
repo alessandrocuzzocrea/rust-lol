@@ -138,6 +138,17 @@ DATABASE_URL=sqlite:///home/loller/dev/rust-lol/db.sqlite
 ```
 
 **Tradeoffs:**
+
+**The `.env` file:**
+
+SQLx macros have built-in dotenv support — they automatically look for a `.env` file in the project root. No `dotenv` crate needed, and **it's only for the macros at build time**, not for the running app:
+
+```
+# .env
+DATABASE_URL=sqlite:///home/loller/dev/rust-lol/db.sqlite
+```
+
+Our app constructs the URL manually in `main.rs` at runtime (`std::env::current_dir().join("db.sqlite")`), so the `.env` is purely a build-time helper for the `!` macros. To make the app itself read `.env` at runtime, you'd add the `dotenv` crate and call `dotenv::dotenv().ok();` at startup.
 - Pro: catches SQL bugs at build time, no runtime surprises
 - Con: needs a running DB with up-to-date schema at build time
 - Workaround: `SQLX_OFFLINE=true` uses a pre-generated schema cache file (`.sqlx/`) — no DB needed in CI
