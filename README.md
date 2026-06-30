@@ -17,11 +17,12 @@ cargo run
 Migrations run automatically on startup via `sqlx::migrate!()`. For manual control, install the SQLx CLI:
 
 ```bash
-cargo install sqlx-cli
+cargo install sqlx-cli --no-default-features -F rustls,sqlite
 
-# Run forward migrations
-sqlx migrate run
+# Run forward migrations (db file must exist first)
+touch db.sqlite
+sqlx migrate run --database-url sqlite://$(pwd)/db.sqlite
 
 # Revert the last migration
-sqlx migrate revert
+sqlx migrate revert --database-url sqlite://$(pwd)/db.sqlite
 ```
