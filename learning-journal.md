@@ -286,6 +286,54 @@ static USERS: LazyLock<HashMap<u32, User>> = LazyLock::new(|| {
 
 `LazyLock` is lazy, thread-safe, and runs once on first access — perfect for static reference data.
 
+### What is Tokio?
+
+Rust doesn't ship with an async runtime — it ships with the *language primitives* (`async fn`, `.await`) but the thing that actually runs them is an external crate. **Tokio** is that crate.
+
+**The stack, bottom to top:**
+
+```
+tokio              ← async runtime (event loop, task scheduler, I/O)
+  └── hyper        ← HTTP protocol implementation (built on tokio)
+       └── axum    ← web framework (routing, extractors, ergonomics on top of hyper)
+            └── your code
+```
+
+**Tokio provides:**
+
+| What | Example in our code |
+|------|-------------------|
+| **Event loop** | `#[tokio::main]` starts it, polls all tasks |
+| **TCP listener** | `tokio::net::TcpListener::bind("0.0.0.0:3000")` |
+| **Task spawner** | `tokio::spawn(async { ... })` — run background work |
+| **Timers** | `tokio::time::sleep(Duration::from_secs(5))` |
+| **I/O channels** | `tokio::sync::mpsc` — async message passing |
+| **Blocking thread pool** | `tokio::task::spawn_blocking(...)` — for sync-heavy work |
+
+**Why you need it:**
+
+`async fn` by itself does nothing — it's just syntax. Something has to call `poll()` on every pending task, sleep while waiting, and wake tasks when their I/O is ready. That's Tokio's job:
+
+```rust
+#[tokio::main]  // ← This macro sets up Tokio's event loop
+async fn main() {
+    // Everything here runs inside Tokio
+    // .await yields control back to the runtime
+}
+```
+
+Without a `#[tokio::main]` (or manually calling `tokio::runtime::Runtime::block_on`), you can't run async code at all. The compiler gives you:
+
+```
+error: `await` is only allowed inside `async` functions and blocks
+```
+
+**Axum's relationship to Tokio:**
+
+Axum doesn't do networking itself — it hands a router to `axum::serve(listener, app)`, which internally uses `hyper` for HTTP parsing and `tokio` for the TCP socket. Every request handler runs as a Tokio task. This is why SQLx (also Tokio-native) slots in seamlessly — they share the same runtime, same thread pool, same `.await` model.
+
+**Recap:** Tokio is the engine, Axum is the steering wheel, hyper is the transmission. You can swap Axum for Actix or Warp, but Tokio remains the de facto standard async engine underneath most of the Rust web ecosystem.
+
 ### Sync vs Async in Rust
 
 **The core idea:** sync code blocks the OS thread until it's done. Async code *yields* the thread while waiting, so one thread can juggle thousands of tasks.
